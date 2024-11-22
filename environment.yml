@@ -1,0 +1,24 @@
+name: tcm_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pandas
+  - pyarrow
+  - scipy
+  - thefuzz
+  - pip:
+    - datasets>=2.14.0
+    - huggingface-hub>=0.17.0
+    - numpy>=1.24.0
+    - tqdm
+    - typing-extensions>=4.0.0
+    - pyyaml>=5.1
+    - requests>=2.19.0
+    - fsspec>=2023.1.0
+    - aiohttp
+    - packaging>=20.0
+    - filelock
+    - suffix-tree
