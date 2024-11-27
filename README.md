@@ -13,6 +13,7 @@ TCMxPlore is a Python library for exploring and analyzing Traditional Chinese Me
 - Design custom formulas using compound-target associations
 - Analyze herb-formula-condition relationships
 - Generate formula recommendations based on molecular signatures
+- Tools that allow AI agents to interact with the TCM databases
 
 ## Installation
 
@@ -137,6 +138,15 @@ results = connector.match_total(
 # Find equivalent herbs across databases
 connector.get_equivalent_herbs('BATMAN', 'American Dragon')
 ```
+
+Go to [this notebook](./Notebooks/1.TCMxPlore%20Demo%20Notebook.ipynb) to learn how to interact with TCM databases.
+
+### agents
+
+The `agents` module provides basic tools to integrate the TCM databases with AI agents, in a format supported by the [just-agents](https://github.com/longevity-genie/just-agents) library.
+
+For a quick demo of agent-enabled functionality, check out [this notebook](./Notebooks/2.TCMxPlore%20Agent%20Annotation.ipynb).
+
 
 ## Use Cases
 

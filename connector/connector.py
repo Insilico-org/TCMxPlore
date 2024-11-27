@@ -184,7 +184,9 @@ class DBConnector:
         #                 "\'targets_known\'", "\'ingredient\'", "\'cid\'", "\'\',",
         #                 "[]","{:","}, ", "{}", " :", "::", ",", ",:"]
         # mask_strings = [(x, "") for x in mask_strings]
-
+        parse_fields = ['formulas', 'herbs', 'conditions', 'ingrs']
+        parse_fields = [x for x in parse_fields if x in self.dbs[db_id].__dict__]
+        self.trees[db_id] = {x: dict() for x in parse_fields}
         ser_db = self.dbs[db_id].serialize(add_links=False)
         for tag in self.trees[db_id]:
             # t=SuffixTree({x:reduce(lambda x,y: x.replace(*y), mask_strings, str(y).lower())
@@ -200,7 +202,7 @@ class DBConnector:
         hits = set.intersection(*hits)
 
         if hits:
-            return([self.dbs[db_id][dtype][x] for x in hits])
+            return([getattr(self.dbs[db_id], dtype)[x] for x in hits])
         return(None)
 
     def tree_find_total(self, query):
@@ -213,7 +215,7 @@ class DBConnector:
 
 
     def match_lucky(self, db_id,
-                   query, dtype,
+                    query, dtype,
                     thr = 50):
         this_map = self.word_maps[db_id][dtype]
 
@@ -363,7 +365,7 @@ class DBConnector:
 
     def create_linked_herbs(self):
         raise NotImplementedError()
-
+    
     def create_linked_flas(self):
         pass
 

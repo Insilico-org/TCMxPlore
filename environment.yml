@@ -10,15 +10,16 @@ dependencies:
   - scipy
   - thefuzz
   - pip:
-    - datasets>=2.14.0
-    - huggingface-hub>=0.17.0
-    - numpy>=1.24.0
+    - datasets>=2.14
+    - huggingface-hub>=0.17
+    - numpy>=1.24
     - tqdm
-    - typing-extensions>=4.0.0
+    - typing-extensions>=4.0
     - pyyaml>=5.1
-    - requests>=2.19.0
-    - fsspec>=2023.1.0
+    - requests>=2.19
+    - fsspec>=2023.1
     - aiohttp
     - packaging>=20.0
     - filelock
     - suffix-tree
+    - just-agents-core=0.4.0
