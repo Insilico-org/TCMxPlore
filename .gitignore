@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+build/
+dify_at_home.egg-info/
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/*
+.vscode/*
+
+# Project specific
+/*.json
+/*.pkl
+/*.pckl
+
+# Testing
+*workscript.py

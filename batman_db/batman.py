@@ -2,7 +2,7 @@ import pandas as pd
 import pickle
 import numpy as np
 from scipy.stats import fisher_exact
-from typing import Optional
+from typing import Optional, Any, Iterable
 from copy import copy as cp
 import json
 
@@ -127,6 +127,30 @@ class Herb(TCMEntity):
         other_ingrs = set(x.cid for x in other.ingrs)
         return this_ingrs == other_ingrs
 
+    def get_target_counts(self,
+                          tg_type: str='both',
+                          gene_names: str = "symbols") -> dict[str|int, int]:
+        """
+        Count occurrences of targets across ingredients
+
+        Args:
+            tg_type: Type of targets to count ('both', 'known', or 'predicted')
+            gene_names: Key for accessing gene identifiers ('symbols' or 'entrez_ids')
+
+        Returns:
+            Dictionary mapping targets to their occurrence counts
+        """
+        tg_counts = dict()
+        for i in self.ingrs:
+            targets = (
+                        set(i.targets["known"][gene_names]) | set(i.targets["predicted"][gene_names]) if
+                        tg_type == "both" else
+                        set(i.targets[tg_type][gene_names])
+                      )
+            for tg in targets:
+                tg_counts[tg] = tg_counts.get(tg, 0) + 1
+        return(tg_counts)
+
 class Formula(TCMEntity):
     entity: str = 'formula'
 
@@ -157,6 +181,26 @@ class Formula(TCMEntity):
 
     def set_herbs(self, db, herbs: list[str]):
         self.herbs = [db.herbs[x] for x in herbs]
+
+    def get_target_counts(self,
+                          tg_type: str='both',
+                          gene_names: str = "symbols") -> dict[str|int, int]:
+        """
+        Count occurrences of targets across a formula's herbs by combining each herb's target counts
+
+        Args:
+            tg_type: Type of targets to count ('both', 'known', or 'predicted')
+            gene_names: Key for accessing gene identifiers ('symbols' or 'entrez_ids')
+
+        Returns:
+            Dictionary mapping targets to their occurrence counts
+        """
+        tg_counts = dict()
+        for h in self.herbs:
+            herb_counts = h.get_target_counts(tg_type, gene_names)
+            for tg, n in herb_counts.items():
+                tg_counts[tg] = tg_counts.get(tg, 0) + n
+        return(tg_counts)
 
 class TCMDB:
     hf_repo: str = "f-galkin/batman2"
@@ -563,7 +607,8 @@ class TCMDB:
     def pick_N_formulas_by_cids(self,
                               cids: list[int],
                               N_herbs: int = 4,
-                              N_top: int = 1):
+                              N_top: int = 1,
+                              blacklist = None):
         present_cids = [x for x in cids if x in self.ingrs]
         if not present_cids:
             return
@@ -574,7 +619,12 @@ class TCMDB:
                          data_map: str,
                          item_type: str,
                          min_items: int = 2,
-                         N_top: int = 1):
+                         N_top: int = 1,
+                         blacklist: Optional[set] = None) -> dict[str, int]:
+                             
+        blacklist = blacklist or set()
+        blacklist = set(blacklist)
+
         match item_type:
             case "herbs":
                 lookup_attr = "pref_name"
@@ -587,7 +637,7 @@ class TCMDB:
 
         present_items = set(x for x in items if x in present_check_set)
         if not present_items:
-            return (0, [])
+            return (dict())
 
         # only lookup entities that have at least 1 queries entity linked
         primary_entities = [present_check_set[x] for x in present_items]
@@ -596,54 +646,60 @@ class TCMDB:
 
         item_counts = {
             x: len(set(getattr(z, lookup_attr) for z in y.__dict__[item_type] ) & present_items)
-            for x, y in linked_entities.items()
+            for x, y in linked_entities.items() if not x in blacklist
         }
 
-        # Filter, sort, and select the top items
+        # Filter, descending sort, and select the top items
         item_counts = sorted(item_counts.items(), key=lambda x: x[1], reverse=True)
-        item_counts = [(x, y) for x, y in item_counts if y >= min_items]
+        item_counts = [(x, y) for x, y in item_counts if y >= min_items and not x in blacklist]
 
-        best_items = [x for x, y in item_counts[:N_top]]
+        best_items = {x:y for x, y in item_counts[:N_top]}
+
         if not best_items:
-            return (0, [])
+            return (dict())
 
-        n_max = item_counts[0][1]
-        return (n_max, best_items)
+        return (best_items)
 
     def select_N_formulas_by_cids(self,
                                  cids: list[int],
                                  min_cids: int = 2,
-                                 N_top: int = 1):
+                                 N_top: int = 1,
+                                 blacklist: Optional[set] = None):
         return self.select_top_items(
             items=cids,
             item_type='ingrs',
             data_map='formulas',
             min_items=min_cids,
-            N_top=N_top
+            N_top=N_top,
+            blacklist = blacklist
         )
 
     def select_N_herbs_by_cids(self,
                                cids: list[int],
                                min_cids: int = 2,
-                               N_top: int = 4):
+                               N_top: int = 4,
+                               blacklist: Optional[set] = None):
         return self.select_top_items(
             items=cids,
             item_type='ingrs',
             data_map='herbs',
             min_items=min_cids,
-            N_top=N_top
+            N_top=N_top,
+            blacklist = blacklist
         )
 
     def select_N_formulas_by_herbs(self,
                                    herbs: list[str],
                                    min_herbs: int = 2,
-                                   N_top: int = 1):
+                                   N_top: int = 1,
+                                   blacklist: Optional[set] = None):
         return self.select_top_items(
             items=herbs,
             item_type='herbs',
             data_map='formulas',
             min_items=min_herbs,
-            N_top=N_top
+            N_top=N_top,
+            blacklist = blacklist
         )
 
     def order_flas_synergistically(self,
@@ -684,10 +740,11 @@ class TCMDB:
         candidates = sorted(candidates, key = lambda x: len(self.formulas[x].get_herbs()), reverse=False)
         return(candidates)
 
-    def find_enriched_cpds(self, glist,
-                           tg_type = 'known', tg_names = "symbols",
-                           thr = 0.001, bg_genes = 25332,
-                           cpd_subset = None):
+    def find_enriched_cpds(self, glist: Iterable[str],
+                           tg_type: str = 'known', tg_names: str = "symbols",
+                           thr: float = 0.001, bg_genes: int = 25332,
+                           cpd_subset: Optional[set] = None,
+                           blacklist: Optional[set] = None) -> dict[int,dict[str,Any]]:
 
         if not tg_type in ('known', 'predicted', 'both'):
             raise ValueError(f"Unknown type of target '{tg_type}'.\nAccepted types: known, predicted")
@@ -703,6 +760,9 @@ class TCMDB:
         else:
             cpd_subset = set([x for x in cpd_subset])
             cpd_subset = cpd_subset.intersection(set(self.ingrs.keys()))
+
+        blacklist = blacklist or set()
+        cpd_subset -= blacklist
 
         total_compars = len(cpd_subset)
 
@@ -732,18 +792,35 @@ class TCMDB:
                                  "corrPv":min(1, F_exact[1]*total_compars),
                                  "targets_hit":len(hits),
                                  "total_targets":len(tg_set)}
-
+        
         sign_findings = {x:y for x,y in enrich_stats.items() if y['corrPv']<thr}
-        return(sign_findings)
+        
+        sorted_items = sorted(
+                sign_findings.items(),
+                key=lambda x: (
+                    x[1]['corrPv'],  # Lower p-value first
+                    -x[1]['targets_hit'],  # More targets hit
+                    -x[1]['targets_hit']/x[1]['total_targets']  # Higher percentage of relevant targets
+                )
+            )
+        
+        return dict(sorted_items)
 
-    def select_herbs_for_targets(self, glist,
-                                tg_type = 'known',
-                                tg_names = "symbols"):
+    def select_herbs_for_targets(self,
+                                glist: list|set,
+                                tg_type: str = 'known',
+                                tg_names: str = "symbols",
+                                blacklist: Optional[set]= None)->dict[str, int]:
+        blacklist = blacklist or set()
+        blacklist = set(blacklist)
+
         glist = set(glist)
         # check compounds:
         #   - count N times a target is mentioned
         h_counts = dict()
         for h, h_obj in self.herbs.items():
+            if h in blacklist:
+                continue
             herb_count = 0
             for c_obj in h_obj.ingrs:
                 if tg_type != 'both':
