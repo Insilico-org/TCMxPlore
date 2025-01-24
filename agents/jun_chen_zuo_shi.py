@@ -30,8 +30,9 @@ from agents.tcm_crew import (TCMTools, find_TCM_herb, find_TCM_condition,
                              pick_cpds_by_targets, pick_herbs_by_targets,
                              pick_herbs_by_cids, get_description_from_cid,
                              get_compound_targets, get_description_from_cid_batch,
-                             find_TCM_compound, TCMPropertyScorer, get_herbal_targets)
-from agents.api_callers import  EnrichrAnalysis, EnrichrCaller
+                             find_TCM_compound, TCMPropertyScorer, get_herbal_targets,
+                             get_herbal_compounds, count_targets_in_compounds)
+from agents.api_callers import  EnrichrAnalysis, EnrichrCaller, ChEMBLAPI
 from dragon_db.annots import HerbAnnotation, TCMAnnotation
 from abc import ABC, abstractmethod
 
@@ -1474,6 +1475,8 @@ class FormulaAnalyzer(BaseAgent):
     def initialize(self):
         self.instruct(self.base_prompt)
         self.enricher = EnrichrCaller
+        self.pubchem = PubChemAPI()
+        self.chembl = ChemblBulkAPI(max_retries=3, retry_delay=1.0)
 
     def describe_formula(self,
                          herb_names: list(str),
@@ -1493,7 +1496,20 @@ class FormulaAnalyzer(BaseAgent):
         enran_gene_list.analyze()
         report["pathways_herbs"] = {"headers": enran_gene_list.legend, "metrics": enran_gene_list.res}
 
-        # Compounds affecting the signature?
+        # Compounds affecting the signature (top 100 by N genes hit)
+        fla_cpds = get_herbal_compounds(herb_names)
+        # get 50 compounds that hit the most aging-related targets
+        hit_tgs_per_cpd = count_targets_in_compounds(fla_cpds, gene_list, N_top=50)
 
-        #
+        # lookup top compound descriptions on PubChem+Chembl
+        cid_list = list(hit_tgs_per_cpd.keys())
+        chembl_ids = self.pubchem.get_chembl_ids_batch(cid_list)
+        pubchem_descs = self.pubchem.get_descriptions_batch(cid_list)
+
+        chembl_annots = self.chembl.create_annotations(chembl_ids)
+        # is the order preserved?
+        chembl_annots_dict={x:y for x,y in zip(cid_list, chembl_annots)}
+        for cpd, anno in chembl_annots_dict.items():
+            anno.add_desc(name = None,
+                          desc = pubchem_descs[cpd])
 

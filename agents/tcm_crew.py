@@ -456,7 +456,6 @@ def get_pubchem_cid(compound_name: str, max_retries: int = 3) -> Optional[str]:
         None
     """
     
-    
     CID_ENDPOINT = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{}/cids/TXT"
     
     # Format query
@@ -1098,6 +1097,27 @@ class TCMPropertyScorer:
         else:
             return [("No suitable herbs found", 0.0)]
 
+def get_herbal_compounds(herb_list: list[str]) -> set[int]:
+    '''
+    Extract all compounds contained in a list of herbs
+    Args:
+        herb_list:
+
+    Returns:
+
+    '''
+
+    tcm = TCMTools()
+    tcm._check_initialization()
+
+    batman_db = tcm._connector.dbs['BATMAN']
+    present_herbs = [x for x in herb_list if x in batman_db.herbs]
+    if not present_herbs:
+        return dict()
+
+    all_cids = set.union(*[{x.cid for x in batman_db.herbs[y].ingrs} for y in present_herbs])
+    return(all_cids)
+
 def get_herbal_targets(herb_list: list[str],
                        top_N: int=100,
                        tg_type: str = 'both',
@@ -1135,8 +1155,8 @@ def get_herbal_targets(herb_list: list[str],
 
     tcm = TCMTools()
     tcm._check_initialization()
-
     batman_db = tcm._connector.dbs['BATMAN']
+
     present_herbs = [x for x in herb_list if x in batman_db.herbs]
     if not present_herbs:
         return dict()
@@ -1162,3 +1182,66 @@ def get_herbal_targets(herb_list: list[str],
         print(f"Error processing herbal targets: {str(e)}")
         return dict()
 
+
+def count_targets_in_compounds(cids: list[int],
+                               gene_list: list[str],
+                               tg_type: str = "both",
+                               gene_names: str = "symbols",
+                               N_top: Optional[int] = 100) -> dict[str, int]:
+    '''
+    Count how many genes from a provided list each compound affects.
+
+    Args:
+        cids: List of PubChem compound IDs to analyze
+        gene_list: List of gene identifiers to check against
+        tg_type: Type of targets to count ('both', 'known', or 'predicted')
+        gene_names: Type of gene identifiers to use ('symbols' or 'entrez_ids')
+        N_top: Optional number of top compounds to return, sorted by target count
+
+    Returns:
+        Dictionary mapping compound IDs to their target count within the gene list,
+        optionally limited to top N compounds by count. For tg_type='both', counts
+        unique targets across both known and predicted sets.
+
+    Example:
+        >>> genes = ['AKT1', 'MAPK1', 'TNF']
+        >>> count_targets_in_compounds([2244, 5280343], genes, N_top=1)
+        {2244: 2}
+    '''
+    if tg_type not in ('both', 'known', 'predicted'):
+        raise ValueError("tg_type must be one of: 'both', 'known', 'predicted'")
+
+    if gene_names not in ('symbols', 'entrez_ids'):
+        raise ValueError("gene_names must be one of: 'symbols', 'entrez_ids'")
+
+    if N_top is not None and not (isinstance(N_top, int) and N_top > 0):
+        raise ValueError("N_top must be a positive integer")
+
+    tcm = TCMTools()
+    tcm._check_initialization()
+    batman_db = tcm._connector.dbs['BATMAN']
+    gene_set = set(gene_list)
+
+    if tg_type in ('known', 'predicted'):
+        target_count_dict = {
+            cid: len(set(batman_db.ingrs[cid].targets[tg_type][gene_names]) & gene_set)
+            for cid in cids if cid in batman_db.ingrs
+        }
+    else:  # tg_type == "both"
+        target_count_dict = {
+            cid: len(
+                (set(batman_db.ingrs[cid].targets['known'][gene_names]) |
+                 set(batman_db.ingrs[cid].targets['predicted'][gene_names])) & gene_set
+            )
+            for cid in cids if cid in batman_db.ingrs
+        }
+
+    # Sort by count (descending) and limit to top N if specified
+    sorted_dict = dict(
+        sorted(
+            target_count_dict.items(),
+            key=lambda x: (-x[1], x[0])  # Sort by count desc, then CID asc
+        )[:N_top if N_top is not None else len(target_count_dict)]
+    )
+
+    return sorted_dict
