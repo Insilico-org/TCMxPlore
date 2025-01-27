@@ -1,4 +1,4 @@
-# tcm_crew.py
+# # agents/tcm_crew.py
 import requests
 import json
 from time import sleep
@@ -201,12 +201,12 @@ def find_TCM_condition(query: str) -> dict[str,Any]:
         str: Error message if no matches found
     
     Example:
-        >>> results = find_TCM_condition("diabetes")
-        >>> if isinstance(results, list):
-        >>>     for result in results:
-        >>>         print(f"Treatment: {result['init']['herb_formulas']}")
-        >>> else:
-        >>>     print(results)  # Error message
+        >> results = find_TCM_condition("diabetes")
+        >> if isinstance(results, list):
+        >>     for result in results:
+        >>         print(f"Treatment: {result['init']['herb_formulas']}")
+        >> else:
+        >>     print(results)  # Error message
     """
     return query_tcmdb(query, 'American Dragon', 'conditions')
 
@@ -239,13 +239,13 @@ def find_TCM_herb(query: str, db_id: str = 'American Dragon') -> dict[str,Any]:
         
     
     Example:
-        >>> results = find_TCM_herb("ginseng")
-        >>> if isinstance(results, list):
-        >>>     for result in results:
-        >>>         print(f"Properties: {result['init']['properties']}")
-        >>>         print(f"Used in: {len(result['links']['formulas'])} formulas")
-        >>> else:
-        >>>     print(results)  # Error message
+        >> results = find_TCM_herb("ginseng")
+        >> if isinstance(results, list):
+        >>     for result in results:
+        >>         print(f"Properties: {result['init']['properties']}")
+        >>         print(f"Used in: {len(result['links']['formulas'])} formulas")
+        >> else:
+        >>     print(results)  # Error message
     """
     return query_tcmdb(query, db_id, 'herbs')
 
@@ -272,12 +272,12 @@ def find_TCM_herb_molecular(query: str) -> dict[str,Any]:
         mechanisms and compound-target interactions rather than traditional usage.
     
     Example:
-        >>> results = find_TCM_herb_molecular("ginseng")
-        >>> if isinstance(results, list):
-        >>>     for result in results:
-        >>>         print(f"Contains {len(result['links']['ingrs'])} compounds")
-        >>> else:
-        >>>     print(results)  # Error message
+        >> results = find_TCM_herb_molecular("ginseng")
+        >> if isinstance(results, list):
+        >>     for result in results:
+        >>         print(f"Contains {len(result['links']['ingrs'])} compounds")
+        >> else:
+        >>     print(results)  # Error message
     """
     return query_tcmdb(query, 'BATMAN', 'herbs')
 
@@ -306,12 +306,12 @@ def find_TCM_formula(query: str) -> dict[str,Any]:
         str: Error message if no matches found
     
     Example:
-        >>> results = find_TCM_formula("liu wei di huang wan")
-        >>> if isinstance(results, list):
-        >>>     for result in results:
-        >>>         print(f"Contains herbs: {result['links']['herbs']}")
-        >>> else:
-        >>>     print(results)  # Error message
+        >> results = find_TCM_formula("liu wei di huang wan")
+        >> if isinstance(results, list):
+        >>     for result in results:
+        >>         print(f"Contains herbs: {result['links']['herbs']}")
+        >> else:
+        >>     print(results)  # Error message
     """
     return query_tcmdb(query, 'American Dragon', 'formulas')
 
@@ -340,12 +340,12 @@ def find_TCM_formula_molecular(query: str) -> dict[str,Any]:
         molecular mechanisms rather than traditional usage.
     
     Example:
-        >>> results = find_TCM_formula_molecular("liu wei di huang wan")
-        >>> if isinstance(results, list):
-        >>>     for result in results:
-        >>>         print(f"Active compounds: {len(result['links']['ingrs'])}")
-        >>> else:
-        >>>     print(results)  # Error message
+        >> results = find_TCM_formula_molecular("liu wei di huang wan")
+        >> if isinstance(results, list):
+        >>     for result in results:
+        >>         print(f"Active compounds: {len(result['links']['ingrs'])}")
+        >> else:
+        >>     print(results)  # Error message
     """
     result = query_tcmdb(query, 'BATMAN', 'formulas')
     
@@ -393,7 +393,7 @@ def find_TCM_compound(query: str, max_links: int = 5000) -> dict[str,Any]:
         'predicted' (computational predictions).
     
     Example:
-        >>> results = find_TCM_compound("quercetin")
+        >> results = find_TCM_compound("quercetin")
         >> print(results)
         [{'query': 2244,
          'database': 'BATMAN',
@@ -450,9 +450,9 @@ def get_pubchem_cid(compound_name: str, max_retries: int = 3) -> Optional[str]:
         Optional[str]: PubChem CID if found, None otherwise
         
     Example:
-        >>> get_pubchem_cid("aspirin")
+        >> get_pubchem_cid("aspirin")
         '2244'
-        >>> get_pubchem_cid("not_a_real_compound")
+        >> get_pubchem_cid("not_a_real_compound")
         None
     """
     
@@ -502,9 +502,9 @@ def get_chembl_from_cid(pubchem_cid: int|str, max_retries: int = 3) -> Optional[
         Optional[str]: ChEMBL ID if found, None otherwise
         
     Example:
-        >>> get_chembl_from_cid("2244")  # Aspirin
+        >> get_chembl_from_cid("2244")  # Aspirin
         'CHEMBL25'
-        >>> get_chembl_from_cid("invalid")
+        >> get_chembl_from_cid("invalid")
         None
     """
     
@@ -555,10 +555,10 @@ def get_description_from_cid(pubchem_cid: int|str, max_retries: int = 3)->Option
         Optional[str]: A JSON foramtted response containing compound descriptions if found, None otherwise
         
     Example:
-        >>> get_chembl_from_cid("1983")  # Acetaminophen
+        >> get_chembl_from_cid("1983")  # Acetaminophen
         ['Acetaminophen', 'Paracetamol is a member of the class of phenols that is 4-aminophenol in which one of the hydrogens attached to the amino group has been replaced by an acetyl group...']
 
-        >>> get_chembl_from_cid("invalid")
+        >> get_chembl_from_cid("invalid")
         None
     """
     pubchem_cid = str(pubchem_cid)
@@ -616,11 +616,11 @@ Optional[dict[int, list[str]]]:
         Optional[dict[int,list[str]]]: Dictionary mapping CIDs to their descriptions if found, None on failure
 
     Example:
-        >>> get_description_from_cid_batch([1983, 2244])  # Acetaminophen, Aspirin
+        >> get_description_from_cid_batch([1983, 2244])  # Acetaminophen, Aspirin
         {1983: ['Acetaminophen', 'Paracetamol is a member of the class of phenols...'],
          2244: ['Aspirin', 'Acetylsalicylic acid is a member of the class of benzoic acids...']}
 
-        >>> get_description_from_cid_batch(['invalid'])
+        >> get_description_from_cid_batch(['invalid'])
         None
     """
     # Validate input
@@ -1135,8 +1135,8 @@ def get_herbal_targets(herb_list: list[str],
         Dictionary mapping top N targets to their occurrence counts, sorted by count in descending order
 
     Example:
-        >>> targets = get_herbal_targets(['DANG SHEN', 'GUI ZHI'], top_N=5)
-        >>> print(targets)
+        >> targets = get_herbal_targets(['DANG SHEN', 'GUI ZHI'], top_N=5)
+        >> print(targets)
         {'AKT1': 12, 'MAPK1': 10, 'TNF': 8, 'IL6': 7, 'VEGFA': 6}
     '''
 
@@ -1204,8 +1204,8 @@ def count_targets_in_compounds(cids: list[int],
         unique targets across both known and predicted sets.
 
     Example:
-        >>> genes = ['AKT1', 'MAPK1', 'TNF']
-        >>> count_targets_in_compounds([2244, 5280343], genes, N_top=1)
+        >> genes = ['AKT1', 'MAPK1', 'TNF']
+        >> count_targets_in_compounds([2244, 5280343], genes, N_top=1)
         {2244: 2}
     '''
     if tg_type not in ('both', 'known', 'predicted'):

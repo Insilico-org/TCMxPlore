@@ -1,3 +1,4 @@
+# agents/api_callers.py
 from typing import Optional, Union
 import json
 import requests
@@ -11,66 +12,116 @@ from chembl_webresource_client.new_client import new_client
 
 from dataclasses import dataclass, field
 
-class EnrichrAnalysis:
-
-    legend: tuple[str] = ('Rank', 'Term name', 'P-value', 'Odds ratio', 'Combined score',
-              'Overlapping genes', 'Adjusted p-value', 'Old p-value', 'Old adjusted p-value')
-
-    def __init__(self, glist:list[str], caller: callable):
-        self.glist=glist
-        self.glist_id = None
-        self.res = None
-
-        self.caller = caller(self)
-
-    def analyze(self):
-        self.caller()
 
 class EnrichrCaller:
+    """Handles API calls to Enrichr pathway analysis service"""
 
-    url: str = 'https://maayanlab.cloud/Enrichr/'
-    db: str = "KEGG_2015"
+    BASE_URL: str = 'https://maayanlab.cloud/Enrichr'
+    # see all options here: https://maayanlab.cloud/Enrichr/datasetStatistics
+    DEFAULT_DB: str = "GO_Biological_Process_2023"
 
-    def __init__(self, container: "EnrichrAnalysis"):
-        self.cont = container
-
-    def add_list(self, desc: str="NA"):
-        q = self.url+'addlist'
-        payload = dict(list=(None,"\n".join(self.cont.glist)),
-                       description=(None, desc))
-
-        response = requests.post(q, files=payload)
-        if not response.ok:
-            raise Exception('Error analyzing gene list')
-        self.cont.glist_id = json.loads(response.text)["userlistId"]
+    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0):
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
 
 
-    def enrich(self):
-        q = self.url + f'enrich?userlistId={self.cont.glist_id}&backgroundType={self.db}'
-        response = requests.get(q)
-        if not response.ok:
-            raise Exception('Error fetching enrichment results')
 
-        self.cont.res = json.loads(response.text)
+    def add_list(self, gene_list: List[str], desc: str = "NA") -> Optional[str]:
+        """Submit gene list to Enrichr"""
+        url = f"{self.BASE_URL}/addList"
+        genes_str = '\n'.join(gene_list)
+        payload = {
+            'list': (None, genes_str),
+            'description': (None, desc)
+        }
 
-    def __call__(self, *args, **kwargs):
-        '''
-        Send a list of genes to Enrichr to get information about enriched pathways
-        >> glist = ["ENTPD5","FBXO3","TRAP1", "KDR", "SEPHS2", "EXOSC4", "RILP","HOXA7"]
-        >> enran=EnrichrAnalysis(glist, EnrichrCaller)
-        >> enran.analyze()
-        >> print(enran.res)
-        Args:
-            *args:
-            **kwargs:
+        for _ in range(self.max_retries):
+            try:
+                response = requests.post(url, files=payload)
+                if response.ok:
+                    return json.loads(response.text)["userListId"]
 
-        Returns:
+                if response.status_code != 503:
+                    break
 
-        '''
-        self.add_list()
-        self.enrich()
-        print("Done with Enrichr analysis")
+            except requests.RequestException:
+                pass
 
+            sleep(self.retry_delay)
+
+        raise Exception('Error submitting gene list to Enrichr')
+
+    def get_enrichment(self, list_id: str, background_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get enrichment results for submitted list"""
+        background_type = background_type or self.DEFAULT_DB
+        url = f'{self.BASE_URL}/enrich?userListId={list_id}&backgroundType={background_type}'
+
+        for _ in range(self.max_retries):
+            try:
+                response = requests.get(url)
+                if response.ok:
+                    return json.loads(response.text)
+
+                if response.status_code != 503:
+                    break
+
+            except requests.RequestException:
+                pass
+
+            sleep(self.retry_delay)
+
+        raise Exception('Error fetching enrichment results')
+
+    def analyze(self, gene_list: List[str], desc: str = "NA", background_type: Optional[str] = None) -> Dict[str, Any]:
+        """Complete gene list enrichment analysis"""
+        list_id = self.add_list(gene_list, desc)
+        results = self.get_enrichment(list_id, background_type)
+        return results
+
+
+class EnrichrAnalysis:
+    """Wrapper for pathway enrichment analysis with result parsing"""
+
+    legend: tuple[str] = (
+        'Rank', 'Term name', 'P-value', 'Odds ratio',
+        'Combined score', 'Overlapping genes', 'Adjusted p-value',
+        'Old p-value', 'Old adjusted p-value'
+    )
+
+    def __init__(self, gene_list: List[str]):
+        self.gene_list = gene_list
+        self.enrichr = EnrichrCaller()
+        self.results = None
+
+    def analyze(self) -> None:
+        """Perform enrichment analysis"""
+        try:
+            self.results = self.enrichr.analyze(self.gene_list)
+            print("Done with Enrichr analysis")
+        except Exception as e:
+            print(f"Enrichr analysis failed: {str(e)}")
+            self.results = None
+
+    def get_significant_terms(self,
+                              p_value_threshold: float = 0.05,
+                              min_overlap: int = 2) -> List[Dict[str, Any]]:
+        """Extract significant enriched terms"""
+        if not self.results:
+            return []
+
+        significant = []
+        for term in self.results.get(self.enrichr.DEFAULT_DB, []):
+            overlapping_genes = term[5] if isinstance(term[5], list) else [term[5]]
+            if (term[2] < p_value_threshold and
+                len(overlapping_genes) >= min_overlap):
+                significant.append({
+                    'term': term[1],
+                    'p_value': term[2],
+                    'odds_ratio': term[3],
+                    'genes': overlapping_genes
+                })
+
+        return sorted(significant, key=lambda x: x['p_value'])
 
 @dataclass
 class PubChemCache:
@@ -79,7 +130,6 @@ class PubChemCache:
     chembl_ids: Dict[int, str] = field(default_factory=dict)
     names: Dict[int, str] = field(default_factory=dict)
     cids: Dict[str, int] = field(default_factory=dict)
-
 
 class PubChemAPI:
     """Thread-safe singleton PubChem API manager with caching"""

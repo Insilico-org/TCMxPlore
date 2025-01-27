@@ -249,3 +249,7 @@ If you use TCMxPlore in your research, please cite both the library and the unde
 
 ```
 
+## to-do
+1. Support async API interactions
+2. Add caching everywhere
+3. Add preliminary result logging

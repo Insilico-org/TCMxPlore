@@ -1,29 +1,14 @@
-# Inputs: patient anamnesis, gene lists to be targeted
-# 1. Make a class to handle the overall workflow
-# 2. Make an agent to find Jun and Chen herbs -- target-based
-# 3. Make an agent that finds Zuo herbs -- toxicity-based
-# 4. Make and agent that finds Shi herbs -- meridian-based
-
-# Jun -- provide the principal therapeutic effect
-# Chen -- Support the medical efficacy of the Jun medicine
-# Zuo -- Treat associated symptoms or reduce toxicity of the other medicines;
-# Shi -- direct other medicines to the diseased organ or contribute to the harmony of all herbs in the formula
-
-# Extra considerations:
-# - add blacklist of compounds
-# - use tree search to find herb candidates
-# - inspect all herbs added at each step for compatibility with patient and toxicity
-
-############
+# agents/jun_chen_zuo_shi.py
 from dotenv import load_dotenv
 load_dotenv()
 
 import json
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields,  asdict
 from typing import List, Dict, Optional, Tuple, Set, Any, Iterable, Union, OrderedDict
 from json_repair import repair_json
-from collections import defaultdict
+from collections import defaultdict, Counter
 import requests
+from time import sleep
 
 from just_agents.base_agent import BaseAgent
 from agents.tcm_crew import (TCMTools, find_TCM_herb, find_TCM_condition,
@@ -32,7 +17,7 @@ from agents.tcm_crew import (TCMTools, find_TCM_herb, find_TCM_condition,
                              get_compound_targets, get_description_from_cid_batch,
                              find_TCM_compound, TCMPropertyScorer, get_herbal_targets,
                              get_herbal_compounds, count_targets_in_compounds)
-from agents.api_callers import  EnrichrAnalysis, EnrichrCaller, ChEMBLAPI
+from agents.api_callers import  EnrichrAnalysis, EnrichrCaller, ChemblBulkAPI, CHEMBL_Annotation, PubChemAPI
 from dragon_db.annots import HerbAnnotation, TCMAnnotation
 from abc import ABC, abstractmethod
 
@@ -548,7 +533,10 @@ class ChenHerbAgent(BaseTCMAgent):
         blacklist_cpds = blacklist_cpds or set()
         blacklist_cpds = set(blacklist_cpds)
         blacklist_herbs = blacklist_herbs or set()
-        blacklist_herbs = set(blacklist_herbs) | {jun_herb_name}
+        # [!]: somehow this line generated a formula wiht ×3 DNAG GUI, not sure how exactly but just in case
+        # adding an extra herb look up
+        # blacklist_herbs = set(blacklist_herbs) | {jun_herb_name}
+        blacklist_herbs = set(blacklist_herbs) | {find_TCM_herb(jun_herb_name).get('preferred_name', "")}
 
         # Get Jun herb information
         jun_herb_batman = find_TCM_herb(jun_herb_name, db_id='BATMAN')
@@ -716,7 +704,10 @@ class ZuoHerbAgent(BaseTCMAgent):
                       blacklist_herbs: Optional[set] = None) -> tuple[str, dict, str]:
         """Find best Zuo herb to address secondary symptoms"""
         blacklist_herbs = blacklist_herbs or set()
-        blacklist_herbs = set(blacklist_herbs) | {jun_herb_name, chen_herb_name}
+        # [!]: somehow this line generated a formula wiht ×3 DNAG GUI, not sure how exactly but just in case
+        # adding an extra herb look up
+        # blacklist_herbs = set(blacklist_herbs) | {jun_herb_name, chen_herb_name}
+        blacklist_herbs = set(blacklist_herbs) | {find_TCM_herb(x).get('preferred_name', "") for x in (jun_herb_name, chen_herb_name)}
 
         # Get existing herb information using tool
         jun_info = find_TCM_herb(jun_herb_name)['results'][0]
@@ -1082,7 +1073,10 @@ class ShiHerbAgent(BaseTCMAgent):
                               min_score: float=0.4) -> dict[str, Any]:
 
         blacklist_herbs = blacklist_herbs or set()
-        blacklist_herbs = set(blacklist_herbs) | set(herb_names.values())
+        # [!]: somehow this line generated a formula wiht ×3 DNAG GUI, not sure how exactly but just in case
+        # adding an extra herb look up
+        # blacklist_herbs = set(blacklist_herbs) | set(herb_names.values())
+        blacklist_herbs = set(blacklist_herbs) | {find_TCM_herb(x).get('preferred_name', "") for x in herb_names.values()}
 
         formula_herbs = {x:find_TCM_herb(y) for x,y in herb_names.items()} # herb status : herb details
         target_weights = self.calculate_property_weights(
@@ -1247,11 +1241,11 @@ class FormulaDesignAgent:
 
             if is_safe:
                 analysis.add_herb('jun', herb_dict, reason, (is_safe, safety_reason))
-                print(f"Herb {name} added as Jun")
+                print(f"==> Herb {name} added as Jun")
                 return True
 
             analysis.add_rejection('jun', name, safety_reason)
-            print(f"==> Herb {name} found not safe for patient")
+            print(f"Herb {name} found not safe for patient")
             name, context, reason = self.jun_agent.choose_another_herb(name, safety_reason)
 
         return False
@@ -1386,53 +1380,6 @@ class FormulaDesignAgent:
 
         return analysis
 
-## Formula presenter
-# - Formula/dosages/regimen/preparation
-# - Warnings
-# - Herb actions and total actions: meridians, temperture, taste
-class FormulaPresenter(BaseAgent):
-
-    base_prompt: str = f"""
-        You are a TCM practitioner analyzing a herbal formula.
-         
-        Consult with databases to gain more understanding of the components of this formula. Present a md-formatted text 
-        description of the formula to be shown to the patient.
-        
-        In your description of the TCM formula, provide a breakdown with the following sections and sub-sections:
-        1. Description
-        1.1 Contents *[skip detailed explanations]*
-            - Form *[decoction, pill, powder, or something else]*
-            - Herb pinyin name (Chinese hyerogliphics, common name): recommended weight and form of component *[for all ingredients]*
-        1.2 Instructions
-            - Single dose / Times per day
-            - Before/after food, preferred time of the day
-            - Maximal daily dose
-            - Course duration 
-        2. Actions
-        2.1 TCM actions *[actions of this formula explained in TCM terms]*
-            - Meridians *[primary and secondary meridians this formula affects]*
-            - Temperature and taste
-            - Actions *[primary and secondary effects on yin/yang/elements]*
-            - Indications *[indications and conditions that this formula may help with based on TCM annotation of the herbs]*
-        2.2 Pharmacological actions
-            - Compounds *[key active ingredients encountered in this formula]*
-            - Protein targets *[key proteins the herbs and compounds in this formula interact with]*
-            - Pathways *[key metabolic pathways reported to be affected in this formula]*
-            - Geroprotective effects *[potential anti-aging effects this formula may have based on its active 
-                ingredients and affected genes/pathways]*
-        2.3 Details *[how this formula is expected to interact with the patient, address the TCM imbalances in their body 
-        and affect the aging process in them]*
-        3. Warnings
-            - Potential side effects, contraindications, allergies, safety notes in the context of the patient;
-            - Diet *[certain foods and drinks that may alter the effects of the formula, according to their temperatures 
-                and tastes. if any foods need to be avoided to maximize this formula's effect]*
-        4. Notes *[any additional details that do not fit in this presentation format]*
-        
-        Consider the patient's specific needs, how various herbs can affect any preexisting conditions, 
-        based on the following information from their personal physician: 
-        
-        """
-
 
 ## Formula Analyzer
 # - most affected proteins [histogram]
@@ -1440,24 +1387,43 @@ class FormulaPresenter(BaseAgent):
 # - MoA — TCM style
 # - MoA — Western style []
 # - geroprotection
-class FormulaAnalyzer(BaseAgent):
 
-    base_prompt: str = "Your are a helpful assistant"
+
+@dataclass
+class FormulaReport:
+    """Container for formula analysis results"""
+    herb_properties: Dict[str, Dict[str, Any]]
+    target_statistics: Dict[str, int]
+    compound_activities: Dict[int, Dict[str, Any]]
+    pathway_enrichment: Dict[str, Any]
+    formula_properties: Dict[str, float]
+    errors: List[str]
+
+    def to_dict(self) -> Dict:
+        """Convert result object to dictionary format."""
+        return asdict(self)
+
+class FormulaAnalyzer(BaseAgent):
+    """Analyzes TCM formulas combining molecular and traditional perspectives"""
+
+    base_prompt: str = """You are a TCM expert analyzing herbal formulas.
+    Your task is to provide comprehensive analysis of formula components,
+    their molecular mechanisms, and traditional properties."""
 
     def __init__(self,
                  llm,
                  tools=None,
-                 completion_max_tries=3,
-                 max_compounds=50,
-                 max_herbs=10,
-                 max_desc_chars=2000):
+                 completion_max_tries: int = 3,
+                 max_compounds: int = 50,
+                 max_herbs: int = 10,
+                 max_desc_chars: int = 2000):
 
         if tools is None:
-            tools = [find_TCM_herb]
+            tools = [find_TCM_herb, find_TCM_compound]
 
         super().__init__(
             llm_options=llm,
-            tools=[find_TCM_herb],
+            tools=tools,
             completion_max_tries=completion_max_tries
         )
 
@@ -1473,43 +1439,363 @@ class FormulaAnalyzer(BaseAgent):
         self.initialize()
 
     def initialize(self):
+        """Initialize analysis tools"""
         self.instruct(self.base_prompt)
-        self.enricher = EnrichrCaller
+        self.enricher = EnrichrAnalysis
         self.pubchem = PubChemAPI()
-        self.chembl = ChemblBulkAPI(max_retries=3, retry_delay=1.0)
+        self.chembl = ChemblBulkAPI()
+        self.property_scorer = TCMPropertyScorer()
+
+    def get_formula_tcm_properties(self,
+                                   herb_names: List[str]) -> Dict[str, float]:
+        """Calculate aggregate TCM properties for the formula"""
+        properties = {
+            'temperature_score': 0.0,
+            'taste_balance': 0.0,
+            'meridian_coverage': 0.0
+        }
+
+        try:
+            herb_details = {}
+            for herb in herb_names:
+                result = find_TCM_herb(herb)
+                if result['results']:
+                    herb_details[herb] = result['results'][0]['init'].get('properties', {})
+
+            if not herb_details:
+                return properties
+
+            # Temperature scoring
+            temp_values = {'Hot': 2, 'Warm': 1, 'Neutral': 0, 'Cool': -1, 'Cold': -2}
+            temps = []
+            for herb_props in herb_details.values():
+                if 'temperature' in herb_props:
+                    primary_temp = herb_props['temperature'].get('primary', ['Neutral'])[0]
+                    temps.append(temp_values.get(primary_temp, 0))
+            properties['temperature_score'] = sum(temps) / len(temps) if temps else 0
+
+            # Taste balance (diversity of tastes)
+            all_tastes = []
+            for herb_props in herb_details.values():
+                if 'taste' in herb_props:
+                    all_tastes.extend(herb_props['taste'].get('primary', []))
+            taste_counts = Counter(all_tastes)
+            max_taste_count = max(taste_counts.values()) if taste_counts else 1
+            properties['taste_balance'] = len(taste_counts) / max_taste_count if max_taste_count > 0 else 0
+
+            # Meridian coverage
+            all_meridians = set()
+            for herb_props in herb_details.values():
+                if 'meridians' in herb_props:
+                    all_meridians.update(herb_props['meridians'].get('primary', []))
+            properties['meridian_coverage'] = len(all_meridians) / 12  # 12 regular meridians
+
+        except Exception as e:
+            print(f"Error calculating TCM properties: {str(e)}")
+
+        return properties
+
+    def analyze_compounds(self,
+                          herb_names: List[str],
+                          gene_list: List[str],
+                          max_compounds: Optional[int] = None) -> Dict[int, Dict[str, Any]]:
+        """Analyze compounds in herbs and their biological activities"""
+        max_compounds = max_compounds or self.max_compounds
+        compound_info = {}
+
+        try:
+            # Get compounds from herbs
+            fla_cpds = get_herbal_compounds(herb_names)
+            fla_cpds = fla_cpds - self.blacklist['compounds']
+
+            # Count target hits
+            hit_tgs_per_cpd = count_targets_in_compounds(
+                list(fla_cpds),
+                gene_list,
+                N_top=max_compounds
+            )
+
+            if not hit_tgs_per_cpd:
+                return compound_info
+
+            # Get compound metadata
+            cid_list = list(hit_tgs_per_cpd.keys())
+            chembl_ids = self.pubchem.get_chembl_ids_batch(cid_list)
+            pubchem_descs = self.pubchem.get_descriptions_batch(cid_list)
+            names = self.pubchem.get_names_batch(cid_list)
+
+            # Get CHEMBL annotations
+            if chembl_ids:
+                chembl_annots = self.chembl.create_annotations(list(chembl_ids.values()))
+                for cid, anno in zip(cid_list, chembl_annots):
+                    if cid in pubchem_descs:
+                        anno.add_desc(
+                            name=names.get(cid, ""),
+                            desc=pubchem_descs[cid][0] if pubchem_descs[cid] else ""
+                        )
+                    compound_info[cid] = {
+                        'name': names.get(cid, "Unknown"),
+                        'description': pubchem_descs.get(cid, []),
+                        'targets_hit': hit_tgs_per_cpd[cid],
+                        'activities': anno.activities if anno else [],
+                        'indications': anno.indications if anno else []
+                    }
+
+        except Exception as e:
+            print(f"Error analyzing compounds: {str(e)}")
+
+        return compound_info
+
+    def analyze_pathways(self,
+                         gene_list: List[str],
+                         p_value_threshold: float = 0.05,
+                         min_overlap: int = 2,
+                         max_terms: int = 30) -> Dict[str, Any]:
+        """
+        Analyze pathway enrichment for a list of genes
+
+        Args:
+            gene_list: List of genes to analyze
+            p_value_threshold: P-value cutoff for significant pathways
+            min_overlap: Minimum number of genes that must overlap with a pathway
+            max_terms: Maximum number of enriched terms to return
+
+        Returns:
+            Dictionary containing:
+                - legend: Column descriptions for pathway results
+                - significant_terms: List of significant pathways
+                - summary_stats: Basic statistics about enrichment
+                - error: Error message if analysis failed
+        """
+        pathway_info = {
+            'legend': self.enricher.legend,
+            'significant_terms': [],
+            'summary_stats': {
+                'total_genes_analyzed': len(gene_list),
+                'genes_mapped_to_pathways': 0,
+                'significant_pathways': 0
+            },
+            'error': None
+        }
+
+        try:
+            # Initialize and run analysis
+            analysis = self.enricher(gene_list)
+            analysis.analyze()
+
+            if not analysis.results:
+                pathway_info['error'] = "No enrichment results returned"
+                return pathway_info
+
+            # Process results for the first library (e.g. GO or KEGG)
+            library_name = list(analysis.results.keys())[0]
+            all_results = analysis.results[library_name]
+
+            # Filter and format significant pathways
+            significant = []
+            genes_in_pathways = set()
+
+            for result in all_results:
+                if len(result) < 6:  # Skip malformed results
+                    continue
+
+                # Extract data
+                term_name = result[1]
+                p_value = float(result[2])
+                odds_ratio = float(result[3])
+                genes = result[5] if isinstance(result[5], list) else [result[5]]
+
+                # Apply filters
+                if p_value > p_value_threshold or len(genes) < min_overlap:
+                    continue
+
+                significant.append({
+                    'term': term_name,
+                    'p_value': p_value,
+                    'odds_ratio': odds_ratio,
+                    'genes': genes
+                })
+                genes_in_pathways.update(genes)
+
+            # Sort by p-value and limit number of terms
+            significant.sort(key=lambda x: x['p_value'])
+            pathway_info['significant_terms'] = significant[:max_terms]
+
+            # Update summary stats
+            pathway_info['summary_stats'].update({
+                'genes_mapped_to_pathways': len(genes_in_pathways),
+                'significant_pathways': len(significant)
+            })
+
+        except Exception as e:
+            pathway_info['error'] = str(e)
+
+        return pathway_info
+
+    def generate_report(self,
+                        formula_data: Dict[str, Any]) -> str:
+        """Generate natural language report from analysis data"""
+
+        """
+           Generate comprehensive TCM formula report with molecular and traditional perspectives
+    
+           Args:
+               formula_data: Dictionary containing formula analysis results
+               patient_info: Optional dictionary with patient details and conditions
+    
+           Returns:
+               Markdown-formatted report string
+           """
+
+        # Format patient context if provided
+
+        report_prompt = f"""
+        You are a TCM practitioner preparing a detailed yet accessible explanation of a herbal formula for your patient.
+        Generate a comprehensive report that helps them understand and properly use their medication.
+
+        Base your analysis on this information aggregate from statistical analysis, TCM reference books, and patient 
+        anamnesis:
+       {json.dumps(formula_data, indent=4)}
+
+        Structure your report in a patient-friendly format with these sections:
+
+        1. Your Formula Overview
+           1.1 Quick Summary
+               - Purpose: Main benefits and treatment goals for your specific condition
+               - Format: How your medicine is prepared (decoction/pill/powder)
+               - Duration: How long you should take this formula
+               - Expected outcomes: What improvements you may notice and when
+
+           1.2 Components (Your Herbs)
+               - For each herb: Pinyin name (Chinese name, common name)
+               - Specific amounts and forms for your case
+               - Role of each herb in addressing your conditions
+
+           1.3 Usage Instructions
+               - Daily dosage schedule (when and how much to take)
+               - Best timing (before/after meals, morning/evening)
+               - Maximum daily amount
+               - How to prepare and store your medicine
+               - Course duration and what to expect
+
+        2. How Your Formula Works
+           2.1 Traditional Understanding
+               - Which energy channels (meridians) are being treated
+               - How this formula balances your body's elements
+               - Why these specific herbs were chosen for you (add any notes on their taste / temperature)
+               - What conditions and symptoms it helps with
+
+           2.2 Modern Scientific Perspective (where applicable, add information on particular protein targets and affected 
+           biological pathways)
+               - Key beneficial compounds in your formula
+               - How these ingredients work together
+               - Major health-promoting effects observed in research (based on reported activities)
+               - Anti-aging and geroprotective benefits
+
+           2.3 Your Personalized Benefits
+               - How this formula addresses your specific conditions
+               - Long-term health benefits
+               - Signs that the formula is working
+
+        3. Important Safety Information
+           - Specific precautions for your case
+           - Possible side effects to watch for
+           - When to contact your practitioner
+           - Dietary Guidelines:
+             * Foods that enhance your treatment
+             * Foods to moderate or avoid
+             * Best times for meals with your medicine
+
+        4. Support Notes
+           - Tips for consistent usage
+           - How to track your progress
+           - When to schedule follow-up
+           - Additional lifestyle recommendations
+
+        Important guidelines:
+        1. Write in clear, friendly language while maintaining professionalism
+        2. Make all instructions specific and actionable
+        3. Explain technical concepts through practical examples
+        4. Focus on the patient's particular conditions and goals
+        5. Provide concrete ways to measure progress
+        6. Include supportive lifestyle recommendations
+        7. Format numbers clearly and consistently
+        8. Use bullet points and headers for easy reference
+        9. Highlight crucial safety information
+        10. Include positive reinforcement and encouragement
+        11. Add practical tips for treatment compliance
+        12. Note what feedback to watch for and report
+        """
+
+        return self.query(report_prompt)
 
     def describe_formula(self,
-                         herb_names: list(str),
-                         gene_list: list[str]):
-        report = dict()
+                         herb_names: List[str],
+                         gene_list: List[str],
+                         patient_obj: 'PatientProfile' = None) -> FormulaReport:
+        """Generate comprehensive formula analysis"""
 
-        # Count top targts hit by herbs
-        report['target_counts'] = get_herbal_targets(herb_names)
+        # Initialize report container
+        report = FormulaReport(
+            herb_properties={},
+            target_statistics={},
+            compound_activities={},
+            pathway_enrichment={},
+            formula_properties={},
+            errors=[]
+        )
 
-        # Herb pathway enrichment
-        enran_herb = EnrichrAnalysis(report['target_counts'], EnrichrCaller)
-        enran_herb.analyze()
-        report["pathways_herbs"] = {"headers": enran_herb.legend, "metrics": enran_herb.res}
+        try:
+            # Get individual herb properties
+            for herb in herb_names:
+                result = find_TCM_herb(herb)
+                if result['results']:
+                    report.herb_properties[herb] = result['results'][0]['init']
 
-        # Gene list pathway enrichment
-        enran_gene_list = EnrichrAnalysis(gene_list, EnrichrCaller)
-        enran_gene_list.analyze()
-        report["pathways_herbs"] = {"headers": enran_gene_list.legend, "metrics": enran_gene_list.res}
+            # Get formula-level TCM properties
+            report.formula_properties = self.get_formula_tcm_properties(herb_names)
 
-        # Compounds affecting the signature (top 100 by N genes hit)
-        fla_cpds = get_herbal_compounds(herb_names)
-        # get 50 compounds that hit the most aging-related targets
-        hit_tgs_per_cpd = count_targets_in_compounds(fla_cpds, gene_list, N_top=50)
+            # Analyze molecular targets
+            report.target_statistics = get_herbal_targets(herb_names, top_N=100)
 
-        # lookup top compound descriptions on PubChem+Chembl
-        cid_list = list(hit_tgs_per_cpd.keys())
-        chembl_ids = self.pubchem.get_chembl_ids_batch(cid_list)
-        pubchem_descs = self.pubchem.get_descriptions_batch(cid_list)
+            # Analyze compounds and their activities
 
-        chembl_annots = self.chembl.create_annotations(chembl_ids)
-        # is the order preserved?
-        chembl_annots_dict={x:y for x,y in zip(cid_list, chembl_annots)}
-        for cpd, anno in chembl_annots_dict.items():
-            anno.add_desc(name = None,
-                          desc = pubchem_descs[cpd])
+            report.compound_activities = self.analyze_compounds(
+                herb_names,
+                gene_list,
+                max_compounds=self.max_compounds
+            )
 
+            # Analyze pathway enrichment
+            herb_targets = get_herbal_targets(herb_names, top_N=100)
+            report.pathway_enrichment['herb_pathways'] = self.analyze_pathways(
+                list(herb_targets.keys()),
+                p_value_threshold=0.1,  # More permissive
+                min_overlap=2
+            )
+
+            sleep(1.12)
+
+            # Analyze pathways for input signature (stricter threshold)
+            report.pathway_enrichment['signature_pathways'] = self.analyze_pathways(
+                gene_list,
+                p_value_threshold=0.05,  # Stricter
+                min_overlap=2
+            )
+
+            # Generate natural language report
+            formula_data = {
+                'herb_properties': report.herb_properties,
+                'formula_properties': report.formula_properties,
+                'target_statistics': report.target_statistics,
+                'compound_activities': report.compound_activities,
+                'pathway_enrichment': report.pathway_enrichment,
+                'patient_info': patient_obj.to_json()
+            }
+
+            report.description = self.generate_report(formula_data)
+
+        except Exception as e:
+            report.errors.append(f"Error in formula analysis: {str(e)}")
+
+        return report
