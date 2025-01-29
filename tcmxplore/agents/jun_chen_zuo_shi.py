@@ -11,14 +11,14 @@ import requests
 from time import sleep
 
 from just_agents.base_agent import BaseAgent
-from agents.tcm_crew import (TCMTools, find_TCM_herb, find_TCM_condition,
+from ..agents.tcm_crew import (TCMTools, find_TCM_herb, find_TCM_condition,
                              pick_cpds_by_targets, pick_herbs_by_targets,
                              pick_herbs_by_cids, get_description_from_cid,
                              get_compound_targets, get_description_from_cid_batch,
                              find_TCM_compound, TCMPropertyScorer, get_herbal_targets,
                              get_herbal_compounds, count_targets_in_compounds)
-from agents.api_callers import  EnrichrAnalysis, EnrichrCaller, ChemblBulkAPI, CHEMBL_Annotation, PubChemAPI
-from dragon_db.annots import HerbAnnotation, TCMAnnotation
+from ..agents.api_callers import  EnrichrAnalysis, EnrichrCaller, ChemblBulkAPI, CHEMBL_Annotation, PubChemAPI
+from ..dragon_db.annots import HerbAnnotation, TCMAnnotation
 from abc import ABC, abstractmethod
 
 GPT4TURBO = {

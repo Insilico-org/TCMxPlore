@@ -5,8 +5,8 @@ from copy import deepcopy as dcp
 from suffix_tree import Tree as SuffixTree
 from functools import reduce
 
-from batman_db import batman
-from dragon_db import annots
+from ..batman_db import batman
+from ..dragon_db import annots
 
 from functools import wraps
 import time

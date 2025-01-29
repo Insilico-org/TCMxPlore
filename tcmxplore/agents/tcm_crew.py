@@ -7,7 +7,7 @@ import numpy as np
 from enum import Enum
 
 from dataclasses import dataclass, asdict
-from connector.connector import BatmanDragonConnector, DBConnector
+from ..connector.connector import BatmanDragonConnector, DBConnector
 
 class TCMCategory(Enum):
     CONDITIONS = 'conditions'
