@@ -1,15 +1,23 @@
 from setuptools import setup, find_packages
 
+# Read version from package __init__.py
+with open("tcmxplore/__init__.py", "r") as f:
+    for line in f:
+        if line.startswith("__version__"):
+            version = line.split("=")[1].strip().strip('"').strip("'")
+            break
+
 setup(
     name="tcmxplore",
-    version="0.1.0",
+    version=version,  # Now reads from __init__.py
     description="A framework for discovering anti-aging TCM formulas with bioinformatics and generative AI",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="Fedor Galkin",
     author_email="f.galkin@insilico.com",
     url="https://github.com/insilicomedicine/TCMxPlore",
-    packages=find_packages(),
+    packages=find_packages(where="tcmxplore"),  # Look for packages inside tcmxplore directory
+    package_dir={"": "tcmxplore"},  # Tell setuptools where to find packages
     install_requires=[
         # Core dependencies
         "pandas",
