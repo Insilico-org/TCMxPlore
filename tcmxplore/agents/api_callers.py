@@ -412,7 +412,7 @@ class ChemblBulkAPI:
                 parent_molecule_chembl_id=parent_id
             ).only(['parent_molecule_chembl_id', 'assay_description'])
 
-            results[parent_id] = [item for item in response[0:limit]]
+            results[parent_id] = [item for item in response[:limit]]
         return results
 
     def get_safety_warnings(self, parent_ids: List[str], limit: int = 10) -> Dict[str, List[Dict]]:
@@ -422,7 +422,7 @@ class ChemblBulkAPI:
                 parent_molecule_chembl_id=parent_id
             ).only(['parent_molecule_chembl_id', 'warning_class'])
 
-            results[parent_id] = [item for item in response[0:limit]]
+            results[parent_id] = [item for item in response[:limit]]
         return results
 
     def get_indications(self, parent_ids: List[str], limit: int = 10) -> Dict[str, List[Dict]]:
@@ -432,7 +432,7 @@ class ChemblBulkAPI:
                 parent_molecule_chembl_id=parent_id
             ).only(['parent_molecule_chembl_id', 'efo_term', 'max_phase_for_ind'])
 
-            results[parent_id] = [item for item in response[0:limit]]
+            results[parent_id] = [item for item in response[:limit]]
         return results
 
     def create_annotations(self, chembl_ids: List[str], limit: int = 10) -> List[CHEMBL_Annotation]:

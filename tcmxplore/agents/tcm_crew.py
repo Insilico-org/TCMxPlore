@@ -65,8 +65,7 @@ class TCMTools:
                    from_huggingface: bool = True,
                    p_connector = None):
         """Initialize the database connector"""
-#         from connector import BatmanDragonConnector
-        from connector.connector import BatmanDragonConnector
+        from ..connector.connector import BatmanDragonConnector
         
         if from_huggingface:
             self._connector = BatmanDragonConnector.from_huggingface()
@@ -869,6 +868,8 @@ def pick_herbs_by_cids(cids: list[int],
                                                                      N_top=N_top,
                                                                      blacklist = blacklist)
     except Exception as e:
+        print("Error in pick_herbs_by_cids:")
+        print(e)
         result = blank_result
     
     if not result:

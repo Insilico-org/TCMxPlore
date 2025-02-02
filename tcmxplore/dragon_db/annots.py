@@ -138,6 +138,7 @@ class FormulaAnnotation(TCMAnnotation):
 
     def set_herbs(self, db, herbs: list[str]):
         self.links['herbs'] = [db.herbs[x] for x in herbs]
+
 class TCMAnnotationDB:
     hf_repo: str = "f-galkin/DragonTCM"
 

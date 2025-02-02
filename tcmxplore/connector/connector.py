@@ -45,6 +45,7 @@ def get_all_keys(d, keys=set()):
         if isinstance(v, dict):
             get_all_keys(v, keys)
     return keys
+
 class DBConnector:
 
     def __init__(self):
@@ -68,9 +69,9 @@ class DBConnector:
             json.dump(out_dict, f)
 
     @classmethod
-    def load(self, p_in, verbose = True):
+    def load(cls, p_in, verbose = True):
 
-        new_con = DBConnector()
+        new_con = cls()
 
         if p_in.lower().endswith(".json"):
             with open(p_in, 'r') as f:
@@ -399,9 +400,9 @@ class BatmanDragonConnector(DBConnector):
             raise
 
     @classmethod
-    def load(self, p_in, verbose = True):
+    def load(cls, p_in, verbose = True):
 
-        new_con = DBConnector()
+        new_con = cls()
 
         if p_in.lower().endswith(".json"):
             with open(p_in, 'r') as f:

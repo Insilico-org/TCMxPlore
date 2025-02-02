@@ -20,12 +20,8 @@ from ..agents.tcm_crew import (TCMTools, find_TCM_herb, find_TCM_condition,
 from ..agents.api_callers import  EnrichrAnalysis, EnrichrCaller, ChemblBulkAPI, CHEMBL_Annotation, PubChemAPI
 from ..dragon_db.annots import HerbAnnotation, TCMAnnotation
 from abc import ABC, abstractmethod
-
-GPT4TURBO = {
-    "model": "gpt-4-turbo-preview",
-    "temperature": 0.4,  # Lower temperature for more focused outputs
-    "tools": []
-}
+import logging
+import asyncio
 
 
 @dataclass
@@ -91,9 +87,9 @@ class PatientProfile:
 class ContraindicationAgent(BaseAgent):
     """Agent specialized in analyzing herb contraindications against patient conditions"""
 
-    def __init__(self, llm, completion_max_tries=3):
+    def __init__(self, llm_options: dict, completion_max_tries=3):
 
-        super().__init__(llm_options=llm,
+        super().__init__(llm_options=llm_options,
                          tools=[find_TCM_herb],
                          completion_max_tries=completion_max_tries)
         self.base_prompt = """You are a TCM expert specialized in analyzing herb safety and contraindications.
@@ -101,8 +97,8 @@ Your task is to determine if a herb is safe for a patient by analyzing the herb'
 against the patient's conditions and risk factors."""
 
     def evaluate_safety(self,
-                        herb_name: str,
-                        patient_obj: 'PatientProfile') -> Tuple[bool, str]:
+                    herb_name: str,
+                    patient_obj: 'PatientProfile') -> Tuple[bool, str]:
         """
         Evaluate if herb is safe for patient by analyzing contraindications
 
@@ -118,9 +114,9 @@ against the patient's conditions and risk factors."""
             herb_safety['safety_category'] = 'Unknown'
 
         ser_patient = patient_obj.serialize(exclude={'risk_factors',
-                                                     'medications',
-                                                     'allergies',
-                                                     'conditions'})
+                                                    'medications',
+                                                    'allergies',
+                                                    'conditions'})
         patient_conditions = "\n".join(patient_obj.all_conditions)
 
         analysis_prompt = f"""
@@ -143,13 +139,21 @@ against the patient's conditions and risk factors."""
         """
 
         joined_prompt = self.base_prompt + analysis_prompt
-        print(f"Submitting a prompt with {len(joined_prompt)} characters")
-        response = self.query(joined_prompt)
+        print(f"Submitting a safety analysis prompt with {len(joined_prompt)} characters")
+        try:
+            response = self.query(joined_prompt, timeout=60)
+        except Exception as e:
+            print(f"Error submitting safety analysis prompt: {e}")
+            # Propagate the error with more context
+            raise RuntimeError(f"Failed to analyze herb safety for {herb_name}: {str(e)}") from e
+
         try:
             result = json.loads(repair_json(response))
             return result["is_safe"], result["reason"]
-        except (json.JSONDecodeError, KeyError):
-            return False, "Failed to analyze herb safety"
+        except (json.JSONDecodeError, KeyError) as e:
+            # Propagate parsing errors as well
+            raise RuntimeError(f"Failed to parse safety analysis response for {herb_name}: {str(e)}") from e
+
 
 ## Herb selection
 class BaseTCMAgent(BaseAgent):
@@ -158,7 +162,7 @@ class BaseTCMAgent(BaseAgent):
     base_prompt: str = "Your are a helpful assistant"
 
     def __init__(self,
-                 llm,
+                 llm_options,
                  tools=None,
                  completion_max_tries=3,
                  max_compounds=50,
@@ -167,7 +171,7 @@ class BaseTCMAgent(BaseAgent):
         if tools is None:
             tools = [find_TCM_herb]
         super().__init__(
-            llm_options=llm,
+            llm_options=llm_options,
             tools=tools,
             completion_max_tries=completion_max_tries
         )
@@ -192,7 +196,7 @@ class BaseTCMAgent(BaseAgent):
 
     def enriched_compounds(self,
                            gene_list: Iterable[str],
-                           thr: float=0.0001,
+                           thr: float=0.01,
                            **kwargs # blacklist + cpd_subset
                           ) -> Dict[int, Any]:
         """Find compounds targeting specified genes"""
@@ -262,9 +266,11 @@ class BaseTCMAgent(BaseAgent):
     def choose_another_herb(self, herb_name: str, reason: str):
         response = self.query(f"Herb {herb_name} is shown to be unsafe for the patient, due to "
                               f"the following considerations: \n {reason}\n"
-                              f"\nSuggest an alternative herb among the preselected options "
+                              f"\nSuggest a safe alternative herb among the preselected options "
                               f"using the same JSON output format")
-        return(self.parse_response(response))
+
+        parsed_resp = self.parse_response(response)
+        return(parsed_resp)
 
     @abstractmethod
     def prep_analysis_prompt(self, **kwargs) -> str:
@@ -361,12 +367,12 @@ class JunHerbAgent(BaseTCMAgent):
         blacklist_herbs = blacklist_herbs or set()
         blacklist_herbs = set(blacklist_herbs)
 
-        best_cpds = self.enriched_compounds(gene_list, blacklist=blacklist_cpds)
+        best_cpds = self.enriched_compounds(gene_list, blacklist=blacklist_cpds, thr=0.01)
 
         # Get herb candidates based on compounds
         best_herbs1 = pick_herbs_by_cids(best_cpds, N_top=10, blacklist = blacklist_herbs)
-        if best_herbs1 is None:
-            best_herbs1 = {"NA": "No herbs found"}
+        if 'No herbs found' in best_herbs1:
+            best_herbs1.pop('No herbs found')
 
         # Get herb candidates based on protein targets
         best_herbs2 = self.get_protein_herb_candidates(gene_list, blacklist_herbs = blacklist_herbs)
@@ -521,6 +527,7 @@ class ChenHerbAgent(BaseTCMAgent):
 
         """
 
+
     def find_chen_herb(self,
                        gene_list: List[str],
                        patient_obj: 'PatientProfile',
@@ -533,19 +540,18 @@ class ChenHerbAgent(BaseTCMAgent):
         blacklist_cpds = blacklist_cpds or set()
         blacklist_cpds = set(blacklist_cpds)
         blacklist_herbs = blacklist_herbs or set()
-        # [!]: somehow this line generated a formula wiht ×3 DNAG GUI, not sure how exactly but just in case
-        # adding an extra herb look up
-        # blacklist_herbs = set(blacklist_herbs) | {jun_herb_name}
+
         blacklist_herbs = set(blacklist_herbs) | {find_TCM_herb(jun_herb_name).get('preferred_name', "")}
 
         # Get Jun herb information
         jun_herb_batman = find_TCM_herb(jun_herb_name, db_id='BATMAN')
         jun_herb_dragon = find_TCM_herb(jun_herb_name)
-        jun_cpds = jun_herb_batman['results'][0]['links']['ingrs']
+        jun_cpd_list = jun_herb_batman['results'][0]['links']['ingrs']
+        jun_cpd_set = set(jun_cpd_list)
 
         enriched_cpds = self.enriched_compounds(gene_list, blacklist = blacklist_cpds)
         # only keep relevant compounds
-        jun_cpds = {cid: stats for cid, stats in enriched_cpds.items() if cid in jun_cpds}
+        jun_cpds = {cid: stats for cid, stats in enriched_cpds.items() if cid in jun_cpd_set}
 
         # Find herbs sharing compounds with Jun herb
         common_cpds = self.herb_common_compound_counts(jun_cpds, blacklist = blacklist_herbs)
@@ -554,7 +560,35 @@ class ChenHerbAgent(BaseTCMAgent):
             common_cpds.items(),
             key=lambda x: x[1],
             reverse=True
-        )[:self.max_herbs])
+        )[:self.max_herbs])        
+        
+        # If no herbs found through compound sharing, try direct target-based approach
+        if not best_herbs:
+            print("No herbs found through compound sharing, trying target-based approach...")
+            
+            # Get Jun herb's target genes
+            jun_targets = set(jun_herb_dragon.get('targets', {}).get('symbols', []))
+            
+            # Find herbs targeting similar genes
+            target_herbs = pick_herbs_by_targets(
+                gene_list=set(gene_list) | jun_targets,  # Include both disease genes and Jun herb targets
+                tg_type='both',  # Consider both known and predicted targets
+                top_herbs=0.05,  # Be more lenient with the cutoff
+                blacklist=blacklist_herbs
+            )
+            
+            if 'No herbs found' in target_herbs:
+                target_herbs.pop('No herbs found')
+                
+            best_herbs = dict(sorted(
+                target_herbs.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:self.max_herbs])
+            
+            if not best_herbs:
+                print("No herbs found through target-based approach either.")
+                return "", {}, "No suitable Chen herbs found through compound sharing or target analysis."
 
         # Get compound information
         cpd_descs = self.get_herb_compounds_info(
@@ -1164,20 +1198,31 @@ class FormulaDesignAgent:
     Acts as a builder for FormulaAnalysis objects.
     """
 
-    def __init__(self, llm_config: dict):
+    def __init__(self, 
+                 llm_options: dict):
         # Initialize sub-agents
-        self.contraindication_agent = ContraindicationAgent(llm=llm_config)
-        self.jun_agent = JunHerbAgent(llm=llm_config)
-        self.chen_agent = ChenHerbAgent(llm=llm_config)
-        self.zuo_agent = ZuoHerbAgent(llm=llm_config)
-        self.shi_agent = ShiHerbAgent(llm=llm_config)
+        
+        self.contraindication_agent = ContraindicationAgent(llm_options=llm_options)
+        self.jun_agent = JunHerbAgent(llm_options=llm_options)
+        self.chen_agent = ChenHerbAgent(llm_options=llm_options)
+        self.zuo_agent = ZuoHerbAgent(llm_options=llm_options)
+        self.shi_agent = ShiHerbAgent(llm_options=llm_options)
 
         # Define global blacklists
         self.global_blacklist = {
             'compounds': {
-                5462328,  # Heroin
-                175  # Acetate
-            },
+                            5462328,  # Heroin
+                            175,  # Acetate
+                            241, # Benzene
+                            702, # Ethanol
+                            8857, # Ethyl acetate
+                            243, # Benzoic acid
+                            7501, # Styrene
+                            931, # Naphatalene
+                            44630435, # NA
+                            887, # Mathanol
+                            177, # Acetaldehyde
+                        },
             'herbs': {"GOU SHEN", 'WU GONG','ZHI CAO WU',
                       'MENG CHONG', 'HA MA YOU', 'XIONG DAN',
                       'SHE XIANG', 'ZI HE CHE', 'DONG CHONG XIA CAO',
@@ -1195,13 +1240,16 @@ class FormulaDesignAgent:
         self.global_blacklist['herbs'] |= toxic_herbs
 
         self.max_retries = 5
+        self.current_analysis = None
 
-    def _get_herb_blacklist(self, analysis: FormulaAnalysis) -> Set[str]:
+        
+
+    def _get_herb_blacklist(self) -> Set[str]:
         """Combine global blacklist with patient-specific contraindications"""
         blacklist = self.global_blacklist['herbs'].copy()
 
         # Add herbs rejected for this patient
-        for rejected in analysis.rejected_herbs.values():
+        for rejected in self.current_analysis.rejected_herbs.values():
             blacklist |= set([herb for herb, _ in rejected])
 
         # Could expand here to add patient-specific contraindications
@@ -1209,91 +1257,105 @@ class FormulaDesignAgent:
 
         return blacklist
 
-    def check_herb_safety(self,
-                          herb_name: str,
-                          analysis: FormulaAnalysis) -> tuple[bool, str]:
+    def check_herb_safety(self, herb_name: str) -> tuple[bool, str]:
         """Check if an herb is safe for the current patient"""
-        return self.contraindication_agent.evaluate_safety(
-            herb_name=herb_name,
-            patient_obj=analysis.patient
-        )
+        try:
+            is_safe = self.contraindication_agent.evaluate_safety(
+                herb_name=herb_name,
+                patient_obj=self.current_analysis.patient
+            )
+            return is_safe
 
+        except Exception as e:
+            # Log the error and propagate it
+            print(f"Error checking safety for {herb_name}: {e}")
+            raise
+        
     def select_jun_herb(self,
-                        analysis: FormulaAnalysis,
                         gene_targets: List[str]) -> bool:
         """Select a safe Jun herb targeting specified genes"""
 
-        herb_blacklist = self._get_herb_blacklist(analysis)
+        herb_blacklist = self._get_herb_blacklist()
         name, context, reason = self.jun_agent.find_jun_herb(
             gene_list=gene_targets,
-            patient_obj=analysis.patient,
+            patient_obj=self.current_analysis.patient,
             blacklist_herbs=herb_blacklist,
             blacklist_cpds=self.global_blacklist['compounds']
         )
+
         assert not name in herb_blacklist, f"Herb {name} found in blacklist!"
         if name == "NA":
             return False
 
         for _ in range(self.max_retries):
-
+            
             herb_dict = context['results'][0]['init']
-            is_safe, safety_reason = self.check_herb_safety(name, analysis)
+            is_safe, safety_reason = self.check_herb_safety(name)
 
             if is_safe:
-                analysis.add_herb('jun', herb_dict, reason, (is_safe, safety_reason))
+                self.current_analysis.add_herb('jun', herb_dict, reason, (is_safe, safety_reason))
                 print(f"==> Herb {name} added as Jun")
                 return True
 
-            analysis.add_rejection('jun', name, safety_reason)
+            self.current_analysis.add_rejection('jun', name, safety_reason)
             print(f"Herb {name} found not safe for patient")
             name, context, reason = self.jun_agent.choose_another_herb(name, safety_reason)
 
         return False
 
     def select_chen_herb(self,
-                         analysis: FormulaAnalysis,
                          gene_targets: List[str]) -> bool:
         """Select a safe Chen herb complementing the Jun herb"""
-        if not analysis.herbs['jun']:
+        if not self.current_analysis.herbs['jun']:
             raise ValueError("Cannot select Chen herb before Jun herb")
 
-        herb_blacklist = self._get_herb_blacklist(analysis)
+        herb_blacklist = self._get_herb_blacklist()
+        
         name, context, reason = self.chen_agent.find_chen_herb(
             gene_list=gene_targets,
-            patient_obj=analysis.patient,
-            jun_herb_name=analysis.herbs['jun']['preferred_name'],
+            patient_obj=self.current_analysis.patient,
+            jun_herb_name=self.current_analysis.herbs['jun']['preferred_name'],
             blacklist_herbs=herb_blacklist,
             blacklist_cpds=self.global_blacklist['compounds']
         )
-
-        if name == "NA":
+        print(f"====> {name}")
+        if name == "NA" or context == "NA" or name == "Not applicable":
+            print(f"Failed to find suitable Chen herb: {reason}")
             return False
 
         for _ in range(self.max_retries):
-            herb_dict = context['results'][0]['init']
-            is_safe, safety_reason = self.check_herb_safety(name, analysis)
+            try:
+                herb_dict = context['results'][0]['init']
+                is_safe, safety_reason = self.check_herb_safety(name)
 
-            if is_safe:
-                analysis.add_herb('chen', herb_dict, reason, (is_safe, safety_reason))
-                print(f"==> Herb {name} added as Chen")
-                return True
+                if is_safe:
+                    self.current_analysis.add_herb('chen', herb_dict, reason, (is_safe, safety_reason))
+                    print(f"==> Herb {name} added as Chen")
+                    return True
 
-            analysis.add_rejection('chen', name, safety_reason)
-            name, context, reason = self.jun_agent.choose_another_herb(name, safety_reason)
+                self.current_analysis.add_rejection('chen', name, safety_reason)
+                name, context, reason = self.chen_agent.choose_another_herb(name, safety_reason)  # Fixed: was using jun_agent
+                
+                if name == "NA" or context == "NA" or name == "Not applicable":
+                    print(f"Failed to find alternative Chen herb: {reason}")
+                    return False
+                    
+            except (KeyError, IndexError) as e:
+                print(f"Error processing herb {name}: {str(e)}")
+                return False
 
         return False
 
-    def select_zuo_herb(self,
-                        analysis: FormulaAnalysis) -> bool:
+    def select_zuo_herb(self) -> bool:
         """Select a safe Zuo herb addressing secondary symptoms"""
-        if not (analysis.herbs['jun'] and analysis.herbs['chen']):
+        if not (self.current_analysis.herbs['jun'] and self.current_analysis.herbs['chen']):
             raise ValueError("Cannot select Zuo herb before Jun and Chen herbs")
 
-        herb_blacklist = self._get_herb_blacklist(analysis)
+        herb_blacklist = self._get_herb_blacklist()
         name, context, reason = self.zuo_agent.find_zuo_herb(
-            patient_obj=analysis.patient,
-            jun_herb_name=analysis.herbs['jun']['preferred_name'],
-            chen_herb_name=analysis.herbs['chen']['preferred_name'],
+            patient_obj=self.current_analysis.patient,
+            jun_herb_name=self.current_analysis.herbs['jun']['preferred_name'],
+            chen_herb_name=self.current_analysis.herbs['chen']['preferred_name'],
             blacklist_herbs=herb_blacklist
         )
 
@@ -1303,31 +1365,30 @@ class FormulaDesignAgent:
         for _ in range(self.max_retries):
 
             herb_dict = context['results'][0]['init']
-            is_safe, safety_reason = self.check_herb_safety(name, analysis)
+            is_safe, safety_reason = self.check_herb_safety(name)
 
             if is_safe:
-                analysis.add_herb('zuo', herb_dict, reason, (is_safe, safety_reason))
+                self.current_analysis.add_herb('zuo', herb_dict, reason, (is_safe, safety_reason))
                 print(f"==> Herb {name} added as Zuo")
                 return True
 
-            analysis.add_rejection('zuo', name, safety_reason)
+            self.current_analysis.add_rejection('zuo', name, safety_reason)
             name, context, reason = self.jun_agent.choose_another_herb(name, safety_reason)
 
         return False
 
-    def select_shi_herb(self,
-                        analysis: FormulaAnalysis) -> bool:
+    def select_shi_herb(self) -> bool:
         """Select a safe Shi herb to guide the formula"""
-        if not all(analysis.herbs[role] for role in ['jun', 'chen', 'zuo']):
+        if not all(self.current_analysis.herbs[role] for role in ['jun', 'chen', 'zuo']):
             raise ValueError("Cannot select Shi herb before Jun, Chen, and Zuo herbs")
 
-        herb_blacklist = self._get_herb_blacklist(analysis)
+        herb_blacklist = self._get_herb_blacklist()
         name, context, reason = self.shi_agent.select_shi_herb(
-            patient_obj=analysis.patient,
+            patient_obj=self.current_analysis.patient,
             herb_names={
-                "Jun": analysis.herbs['jun']['preferred_name'],
-                "Chen": analysis.herbs['chen']['preferred_name'],
-                "Zuo": analysis.herbs['zuo']['preferred_name']
+                "Jun": self.current_analysis.herbs['jun']['preferred_name'],
+                "Chen": self.current_analysis.herbs['chen']['preferred_name'],
+                "Zuo": self.current_analysis.herbs['zuo']['preferred_name']
             },
             blacklist_herbs=herb_blacklist
         )
@@ -1338,14 +1399,14 @@ class FormulaDesignAgent:
         for _ in range(self.max_retries):
 
             herb_dict = context['results'][0]['init']
-            is_safe, safety_reason = self.check_herb_safety(name, analysis)
+            is_safe, safety_reason = self.check_herb_safety(name)
 
             if is_safe:
-                analysis.add_herb('shi', herb_dict, reason, (is_safe, safety_reason))
+                self.current_analysis.add_herb('shi', herb_dict, reason, (is_safe, safety_reason))
                 print(f"==> Herb {name} added as Shi")
                 return True
 
-            analysis.add_rejection('shi', name, safety_reason)
+            self.current_analysis.add_rejection('shi', name, safety_reason)
             name, context, reason = self.jun_agent.choose_another_herb(name, safety_reason)
 
         return False
@@ -1359,26 +1420,37 @@ class FormulaDesignAgent:
         Returns:
             FormulaAnalysis object containing the complete formula design
         """
-        analysis = FormulaAnalysis(patient)
+        self.current_analysis = FormulaAnalysis(patient)
+        logger = logging.getLogger(__name__)
 
         # Select herbs in sequence
         try:
-            if not self.select_jun_herb(analysis, gene_targets):
-                return analysis
+            logger.info("Starting Jun herb selection...")
+            if not self.select_jun_herb(gene_targets):
+                return self.current_analysis
+            logger.info(f"==> Herb {self.current_analysis.herbs['jun']['preferred_name']} added as Jun")
 
-            if not self.select_chen_herb(analysis, gene_targets):
-                return analysis
+            logger.info("Starting Chen herb selection...")
+            if not self.select_chen_herb(gene_targets):
+                return self.current_analysis
+            logger.info(f"==> Herb {self.current_analysis.herbs['chen']['preferred_name']} added as Chen")
 
-            if not self.select_zuo_herb(analysis):
-                return analysis
 
-            if not self.select_shi_herb(analysis):
-                return analysis
+            logger.info("Starting Zuo herb selection...")
+            if not self.select_zuo_herb():
+                return self.current_analysis
+            logger.info(f"==> Herb {self.current_analysis.herbs['zuo']['preferred_name']} added as Zuo")
+
+            logger.info("Starting Shi herb selection...")
+            if not self.select_shi_herb():
+                return self.current_analysis
+            logger.info(f"==> Herb {self.current_analysis.herbs['shi']['preferred_name']} added as Shi")
 
         except Exception as e:
-            print(f"Formula design error: {str(e)}")
+            print(f"[.design_formula] Formula design error: {str(e)}")
 
-        return analysis
+        return self.current_analysis
+    
 
 
 ## Formula Analyzer
@@ -1397,6 +1469,7 @@ class FormulaReport:
     compound_activities: Dict[int, Dict[str, Any]]
     pathway_enrichment: Dict[str, Any]
     formula_properties: Dict[str, float]
+    description: str
     errors: List[str]
 
     def to_dict(self) -> Dict:
@@ -1411,7 +1484,7 @@ class FormulaAnalyzer(BaseAgent):
     their molecular mechanisms, and traditional properties."""
 
     def __init__(self,
-                 llm,
+                 llm_options,
                  tools=None,
                  completion_max_tries: int = 3,
                  max_compounds: int = 50,
@@ -1422,14 +1495,39 @@ class FormulaAnalyzer(BaseAgent):
             tools = [find_TCM_herb, find_TCM_compound]
 
         super().__init__(
-            llm_options=llm,
+            llm_options=llm_options,
             tools=tools,
             completion_max_tries=completion_max_tries
         )
 
         self.blacklist = {
-            "compounds": set(),
-            "herbs": set()
+            "compounds": {
+                            5462328,  # Heroin
+                            175,  # Acetate
+                            241, # Benzene
+                            702, # Ethanol
+                            8857, # Ethyl acetate
+                            243, # Benzoic acid
+                            7501, # Styrene
+                            931, # Naphatalene
+                            44630435, # NA
+                            887, # Mathanol
+                            177, # Acetaldehyde
+                        },
+            "herbs": {"GOU SHEN", 'WU GONG','ZHI CAO WU',
+                      'MENG CHONG', 'HA MA YOU', 'XIONG DAN',
+                      'SHE XIANG', 'ZI HE CHE', 'DONG CHONG XIA CAO',
+                      'LU RONG', 'JIU', 'REN NIAO',
+
+                       'FU ZI', 'WU TOU', 'XI XIN', 'MA HUANG',
+                       'YANG JIN HUA', 'LEI GONG TENG', 'WU GONG', 'QUAN XIE',
+                       'BAI HUA SHE', 'MANG CHONG', 'ZHE CHONG', 'SHAN DOU GEN',
+                       'BAN XIA', 'TIAN NAN XING', 'BAI FU ZI', 'WEI LING XIAN',
+                       'XIAN MAO', 'WU ZHU YU', 'HUA JIAO', 'YUAN ZHI',
+                       'KU LIAN PI', 'HE SHI', 'GUA DI', 'LI LU',
+                       'CHANG SHAN', 'GAN SUI', 'DA JI', 'YUAN HUA',
+                       'SHANG LU', 'QIAN NIU ZI', 'BA DOU', 'ZHU SHA'}
+
         }
 
         self.max_compounds = max_compounds
@@ -1506,7 +1604,7 @@ class FormulaAnalyzer(BaseAgent):
         try:
             # Get compounds from herbs
             fla_cpds = get_herbal_compounds(herb_names)
-            fla_cpds = fla_cpds - self.blacklist['compounds']
+            fla_cpds = set(fla_cpds) - self.blacklist['compounds'] # set - dict?
 
             # Count target hits
             hit_tgs_per_cpd = count_targets_in_compounds(
@@ -1742,6 +1840,7 @@ class FormulaAnalyzer(BaseAgent):
             compound_activities={},
             pathway_enrichment={},
             formula_properties={},
+            description="",
             errors=[]
         )
 
