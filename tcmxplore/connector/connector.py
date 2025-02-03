@@ -126,6 +126,8 @@ class DBConnector:
                                  for x, y in in_dict["word_maps"].items()}
             if verbose:
                 print("Done adding word maps")
+        
+        # new_con.make_trees("American Dragon")
 
         return(new_con)
 

@@ -9,6 +9,7 @@ from json_repair import repair_json
 from collections import defaultdict, Counter
 import requests
 from time import sleep
+import re
 
 from just_agents.base_agent import BaseAgent
 from ..agents.tcm_crew import (TCMTools, find_TCM_herb, find_TCM_condition,
@@ -46,6 +47,44 @@ class PatientProfile:
             self.risk_factors +
             [f"Taking medication: {med}" for med in self.medications]
         )
+    @staticmethod
+    def _parse_list(text: Union[str, List[str]]) -> List[str]:
+        """Convert delimited text or list to clean list
+        
+        Handles multiple delimiter types:
+        - Commas (,)
+        - Semicolons (;)
+        - Newlines (\n)
+        - Bullet points (•)
+        - Dashes (-)
+        """
+        # If already a list, clean each item
+        if isinstance(text, list):
+            items = text
+        else:
+            if not text or str(text).lower() == 'none':
+                return []
+                
+            # Replace common delimiters with commas
+            text = str(text).replace('\n', ',').replace(';', ',').replace('•', ',')
+            
+            # Split by commas
+            items = text.split(',')
+        
+        # Clean up each item
+        cleaned_items = []
+        for item in items:
+            # Strip whitespace
+            item = str(item).strip()
+            
+            # Remove common list markers
+            item = re.sub(r'^\s*[-*•]\s*', '', item)  # Remove bullet points
+            item = re.sub(r'^\s*\d+\.\s*', '', item)  # Remove numbered lists
+            
+            if item:  # Only add non-empty items
+                cleaned_items.append(item)
+        
+        return cleaned_items
 
     @classmethod
     def from_dict(cls, profile_data: Dict) -> 'PatientProfile':
@@ -54,12 +93,12 @@ class PatientProfile:
             age=profile_data.get('age', -1),
             sex=profile_data.get('sex', 'male'),
 
-            conditions=profile_data.get('conditions', []),
-            allergies=profile_data.get('allergies', []),
-            medications=profile_data.get('medications', []),
-            risk_factors=profile_data.get('risk_factors', []),
+            conditions=cls._parse_list(profile_data.get('conditions', [])),
+            allergies=cls._parse_list(profile_data.get('allergies', [])),
+            medications=cls._parse_list(profile_data.get('medications', [])),
+            risk_factors=cls._parse_list(profile_data.get('risk_factors', [])),
 
-            goals=profile_data.get('goals', [])
+            goals=cls._parse_list(profile_data.get('goals', []))
         )
 
     def serialize(self, exclude: Set[str] = None) -> Dict[str, Any]:
@@ -743,10 +782,13 @@ class ZuoHerbAgent(BaseTCMAgent):
         # blacklist_herbs = set(blacklist_herbs) | {jun_herb_name, chen_herb_name}
         blacklist_herbs = set(blacklist_herbs) | {find_TCM_herb(x).get('preferred_name', "") for x in (jun_herb_name, chen_herb_name)}
 
-        # Get existing herb information using tool
-        jun_info = find_TCM_herb(jun_herb_name)['results'][0]
-        chen_info = find_TCM_herb(chen_herb_name)['results'][0]
+        jun_found = find_TCM_herb(jun_herb_name)
+        chen_found = find_TCM_herb(chen_herb_name)
 
+        # Get existing herb information using tool
+        jun_info = jun_found['results'][0]
+        chen_info = chen_found['results'][0]
+        
         # Extract primary actions
         jun_actions = self._extract_herb_actions(jun_info)
         chen_actions = self._extract_herb_actions(chen_info)
@@ -769,7 +811,7 @@ class ZuoHerbAgent(BaseTCMAgent):
 
         # Remove existing herbs
         candidate_herbs = candidate_herbs - blacklist_herbs
-
+    
         # Process candidates
         herb_entries = {}
         for herb_name in list(candidate_herbs)[:self.max_herbs]:
@@ -783,6 +825,9 @@ class ZuoHerbAgent(BaseTCMAgent):
             coverage = self._analyze_herb_coverage(herb_entry, secondary_symptoms)
             compatibility = self._check_herb_compatibility(herb_entry, jun_info, chen_info)
 
+            # [!]: Need a better way to assign scores since exact matches are very rare
+            # print(f" ===> Analyzed {herb_name} - Coverage score: {coverage['coverage_score']}, Compatibility issues: {len(compatibility)}")
+
             herb_entries[herb_name] = {
                 'info': herb_entry,
                 'analysis': {
@@ -790,6 +835,9 @@ class ZuoHerbAgent(BaseTCMAgent):
                     'compatibility_issues': compatibility
                 }
             }
+        
+        if not herb_entries:
+            print("No valid herb entries after analysis")
 
         # Generate and process analysis
         analysis_prompt = self.prep_analysis_prompt(
@@ -801,6 +849,7 @@ class ZuoHerbAgent(BaseTCMAgent):
             },
             secondary_symptoms=secondary_symptoms
         )
+
 
         print(f"Submitting a prompt with {len(analysis_prompt)} characters")
         response = self.query(analysis_prompt)
@@ -817,12 +866,14 @@ class ZuoHerbAgent(BaseTCMAgent):
             for action in herb_info['init']['actions']:
                 if isinstance(action, str):
                     actions.add(action.lower())
-                elif isinstance(action, dict) and 'action' in action:
+                if isinstance(action, dict) and 'action' in action:
                     actions.add(action['action'].lower())
+                if isinstance(action, dict) and 'indication' in action:
+                    actions.add(action['indication'].lower())
 
         # Extract from treatment indications
-        if 'treats' in herb_info['init']:
-            actions.update(cond.lower() for cond in herb_info['init']['treats'])
+        if 'indications' in herb_info['init']:
+            actions.update(cond.lower() for cond in herb_info['init']['indications'])
 
         return actions
 
@@ -1220,13 +1271,14 @@ class FormulaDesignAgent:
                             7501, # Styrene
                             931, # Naphatalene
                             44630435, # NA
-                            887, # Mathanol
+                            887, # Methanol
                             177, # Acetaldehyde
+                            284, # Formic acid
                         },
             'herbs': {"GOU SHEN", 'WU GONG','ZHI CAO WU',
                       'MENG CHONG', 'HA MA YOU', 'XIONG DAN',
                       'SHE XIANG', 'ZI HE CHE', 'DONG CHONG XIA CAO',
-                      'LU RONG', 'JIU', 'REN NIAO'}
+                      'LU RONG', 'JIU', 'REN NIAO', "HOU ZAO"}
         }
 
         toxic_herbs = {'FU ZI', 'WU TOU', 'XI XIN', 'MA HUANG',
@@ -1451,15 +1503,6 @@ class FormulaDesignAgent:
 
         return self.current_analysis
     
-
-
-## Formula Analyzer
-# - most affected proteins [histogram]
-# - are any pathways enriched (ENRICHER KG)
-# - MoA — TCM style
-# - MoA — Western style []
-# - geroprotection
-
 
 @dataclass
 class FormulaReport:
@@ -1785,10 +1828,10 @@ class FormulaAnalyzer(BaseAgent):
 
            2.2 Modern Scientific Perspective (where applicable, add information on particular protein targets and affected 
            biological pathways)
-               - Key beneficial compounds in your formula
-               - How these ingredients work together
-               - Major health-promoting effects observed in research (based on reported activities)
-               - Anti-aging and geroprotective benefits
+               - Key beneficial compounds in your formula (specify 3-4 key compounds and their sources)
+               - How these ingredients work together (rely on the presented knwoledge of pathways and genes)
+               - Major health-promoting effects observed in research (based on reported activities and pathways)
+               - Anti-aging and geroprotective benefits (based on your knowledge of aging-related processes and the formula's molecular context)
 
            2.3 Your Personalized Benefits
                - How this formula addresses your specific conditions
@@ -1818,7 +1861,7 @@ class FormulaAnalyzer(BaseAgent):
         5. Provide concrete ways to measure progress
         6. Include supportive lifestyle recommendations
         7. Format numbers clearly and consistently
-        8. Use bullet points and headers for easy reference
+        8. Use bullet points and headers for easy reference, in accordance with Discord markdown parser
         9. Highlight crucial safety information
         10. Include positive reinforcement and encouragement
         11. Add practical tips for treatment compliance
@@ -1873,7 +1916,7 @@ class FormulaAnalyzer(BaseAgent):
                 min_overlap=2
             )
 
-            sleep(1.12)
+            sleep(0.87)
 
             # Analyze pathways for input signature (stricter threshold)
             report.pathway_enrichment['signature_pathways'] = self.analyze_pathways(

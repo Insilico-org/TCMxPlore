@@ -2,6 +2,7 @@
 __pycache__/
 build/
 dify_at_home.egg-info/
+*.egg-info/*
 
 # Environment
 .env
