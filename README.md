@@ -253,3 +253,5 @@ If you use TCMxPlore in your research, please cite both the library and the unde
 1. Support async API interactions
 2. Add caching everywhere
 3. Add preliminary result logging
+
+[You can test a Discord bot powered by this library here](https://discord.com/channels/1243588542651830312/1262849443309420575)
