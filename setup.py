@@ -32,7 +32,7 @@ setup(
         "packaging>=20.0",
         "filelock",
         "suffix-tree",
-        "just-agents-core==0.4.0",
+        "just-agents-core==0.4.3",
         "chembl_webresource_client>=0.10",
         "datasets>=2.14",
         "huggingface-hub>=0.17",
