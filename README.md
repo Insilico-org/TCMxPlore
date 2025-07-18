@@ -206,16 +206,19 @@ If you use TCMxPlore in your research, please add these entries to your bibliogr
 ```bibtex
 
 
-@article{noauthor_llms_2025,
+@article{galkin_llms_2025,
 	title = {{LLMs} and {AI} {Life} {Models} for {Traditional} {Chinese} {Medicine}-derived {Geroprotector} {Formulation}},
 	issn = {2152-5250},
-	url = {https://www.aginganddisease.org/EN/10.14336/AD.2024.1697},
-	doi = {10.14336/ad.2024.1697},
-	urldate = {2025-07-18},
-	journal = {aging and disease},
+	doi = {10.14336/AD.2024.1697},
+	abstract = {Traditional Chinese Medicine (TCM) represents a vast repository of therapeutic knowledge, but its integration with modern drug discovery remains challenging due to fundamental differences in theoretical frameworks. We developed an AI agent-driven framework combining Precious3GPT (P3GPT), a multi-omics transformer model, with the BATMAN-TCM2 database of TCM compound-target interactions to bridge this gap. As a proof-of-concept, we used P3GPT-generated cross-species and cross-tissue signatures to screen TCM compounds, herbs, and formulas to identify novel natural geroprotectors. The cross-species analysis identified 13 conserved aging-associated genes, leading to the identification of 34 TCM compounds with significant target overlap and enabling identification of HUA SHAN WU ZI DAN and other TCM formulations as a promising historical formula. Our work demonstrates the feasibility of using AI to systematically bridge TCM and modern pharmacology, enabling rational design of multi-component formulations targeting age-related processes across multiple tissues and species. This approach provides a framework for modernizing traditional medicine while maintaining its holistic therapeutic principles. To help other teams integrate AI experimentation in their research process, we publicly release all materials and codebase used in this work, including the multi-agent system, cross-species and cross-tissue signatures of aging, as well as TCM databases formatted for AI interactions.},
+	language = {eng},
+	journal = {Aging and Disease},
+	author = {Galkin, Fedor and Ren, Feng and Zhavoronkov, Alex},
+	month = apr,
 	year = {2025},
-	note = {Publisher: Aging and Disease},
+	pmid = {40249926},
 }
+
 
 
 @software{tcmxplore2024,
