@@ -199,9 +199,25 @@ This library uses data from:
 
 ## Citation
 
-If you use TCMxPlore in your research, please cite both the library and the underlying databases:
+You can learn more about TCMxPlore in our peer-reviewed paper [*"LLMs and AI Life Models for Traditional Chinese Medicine-derived Geroprotector Formulation" (2025)*](https://doi.org/10.14336/ad.2024.1697).
+
+If you use TCMxPlore in your research, please add these entries to your bibliography:
 
 ```bibtex
+
+
+@article{noauthor_llms_2025,
+	title = {{LLMs} and {AI} {Life} {Models} for {Traditional} {Chinese} {Medicine}-derived {Geroprotector} {Formulation}},
+	issn = {2152-5250},
+	url = {https://www.aginganddisease.org/EN/10.14336/AD.2024.1697},
+	doi = {10.14336/ad.2024.1697},
+	urldate = {2025-07-18},
+	journal = {aging and disease},
+	year = {2025},
+	note = {Publisher: Aging and Disease},
+}
+
+
 @software{tcmxplore2024,
   title = {TCMxPlore: A Python Library for Traditional Chinese Medicine Analysis},
   author = {Galkin, Fedor},
@@ -253,3 +269,5 @@ If you use TCMxPlore in your research, please cite both the library and the unde
 1. Support async API interactions
 2. Add caching everywhere
 3. Add preliminary result logging
+
+[You can test a Discord bot powered by this library here](https://discord.com/channels/1243588542651830312/1262849443309420575)
