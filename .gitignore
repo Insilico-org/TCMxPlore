@@ -1,7 +1,7 @@
 # Python
 __pycache__/
 build/
-dify_at_home.egg-info/
+tcmxplore.egg-info/
 
 # Environment
 .env
